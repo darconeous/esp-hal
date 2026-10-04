@@ -501,6 +501,29 @@ pub(crate) fn ble_init(config: &Config) -> PhyInitGuard<'static> {
 }
 
 pub(crate) fn ble_deinit() {
+    // Teardown yields to the controller task. Keep the chip awake after releasing
+    // its wake source, including while the controller finishes waking up.
+    let _wake_lock = esp_hal::rtc_cntl::WakeLock::new();
+
+    if super::modem_sleep_enabled() {
+        unsafe {
+            // Resetting a sleeping BTDM baseband hangs in rwble_hw_disable on S3.
+            // Keep the sleep-exit callbacks enabled until the wake completes:
+            // they restore the PHY and synchronize the controller clock.
+            btdm_in_wakeup_requesting_set(true);
+            btdm_controller_enable_sleep(false);
+            if !btdm_power_state_active() {
+                btdm_wakeup_request();
+            }
+            while !btdm_power_state_active() {
+                crate::preempt::yield_task();
+            }
+            // Sleep remains disabled, so releasing this lock cannot race a new
+            // sleep. Release it before deinit destroys the controller's locks.
+            btdm_in_wakeup_requesting_set(false);
+        }
+    }
+
     super::lp_clk::release_wake_source();
     super::modem_phy_acquire();
     super::set_modem_sleep(false);

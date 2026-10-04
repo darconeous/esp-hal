@@ -131,6 +131,48 @@ mod tests {
         esp_hal::delay::Delay::new().delay_millis(10);
     }
 
+    // Exercise actual modem sleep, then teardown and an awake controller re-init.
+    // The test timeout catches both a missing sleep and a stuck hardware reset.
+    #[cfg(any(esp32c3, esp32s3))]
+    #[test]
+    async fn test_dropping_sleeping_controller(p: Peripherals) {
+        unsafe extern "C" {
+            fn btdm_power_state_active() -> bool;
+        }
+
+        let timg0: TimerGroup<'_, _> = TimerGroup::new(p.TIMG0);
+        esp_rtos::start(timg0.timer0);
+        let mut bt = p.BT;
+
+        for _ in 0..3 {
+            let sleeping = BleConnector::new(
+                bt.reborrow(),
+                esp_radio::ble::Config::default().with_modem_sleep(true),
+            )
+            .unwrap();
+            // SAFETY: the live connector owns the initialized BTDM controller.
+            while unsafe { btdm_power_state_active() } {
+                embassy_time::Timer::after_millis(1).await;
+            }
+            drop(sleeping);
+
+            let mut awake = BleConnector::new(
+                bt.reborrow(),
+                esp_radio::ble::Config::default().with_modem_sleep(false),
+            )
+            .unwrap();
+            awake.write(&[1, 3, 12, 0]).unwrap(); // HCI Reset
+            let mut packet = [0; 255];
+            loop {
+                let len = read_packet(&mut awake, &mut packet);
+                if len == 7 && packet[..3] == [4, 14, 4] && packet[4..6] == [3, 12] {
+                    assert_eq!(packet[6], 0, "HCI Reset after sleepy teardown failed");
+                    break;
+                }
+            }
+        }
+    }
+
     #[test]
     async fn test_trouble_starts_advertising(p: Peripherals) {
         let timg0: TimerGroup<'_, _> = TimerGroup::new(p.TIMG0);
