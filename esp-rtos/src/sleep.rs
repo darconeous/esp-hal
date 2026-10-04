@@ -93,11 +93,25 @@ impl DeepSleep {
     /// The sleep ends when one of the wakeup sources that the drivers enabled becomes active. The
     /// wake from deep sleep resets the chip, so this function does not return.
     ///
+    /// The next wakeup of the scheduler does not end the sleep. Automatic light sleep arms that
+    /// wakeup as the timer deadline, and this function disarms it.
+    ///
     /// # Panics
     ///
     /// Panics if no wakeup source is enabled, because nothing could end the sleep.
     pub fn deep_sleep(&mut self) -> ! {
         let mut lpwr = LowPower::new(self.lpwr.reborrow());
+
+        // The idle hook arms the next scheduler wakeup as a standing deadline, and only the hook
+        // clears it. The hook does neither while a `WakeLock` is held, so the deadline can also be
+        // long past. A deep sleep resets the chip, so no task remains to wake for. A deadline left
+        // armed ends the sleep early, or makes `sleep_deep` panic when it has already passed.
+        //
+        // The hook reads the wake lock under the scheduler lock, before it arms the deadline. A
+        // hook on another core has therefore armed it before this clear, or it sees the lock.
+        let _wake_lock = WakeLock::new();
+        SCHEDULER.with(|_| lpwr.clear_wakeup_deadline());
+
         lpwr.sleep_deep(RtcSleepConfig::deep())
     }
 }

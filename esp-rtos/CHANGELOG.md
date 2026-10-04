@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `DeepSleep::deep_sleep` disarms the scheduler wakeup deadline that automatic light sleep armed. The deadline ended the sleep early, or made the call panic when it had already passed.
 
 ### Removed
 
