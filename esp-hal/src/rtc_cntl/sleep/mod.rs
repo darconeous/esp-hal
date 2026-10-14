@@ -600,8 +600,11 @@ fn sleep_uart_prepare() {
     use crate::uart::Instance;
     for_each_uart! {
         ($id:literal, $inst:ident, $peri:ident, $rxd:ident, $txd:ident, $cts:ident, $rts:ident, wakeup_source = $_:literal) => {
-            unsafe {
-                crate::peripherals::$inst::steal().info().suspend_for_sleep();
+            // A UART whose clock is off has nothing to flush or suspend,
+            // and touching its registers would wait on that clock.
+            let info = unsafe { crate::peripherals::$inst::steal() }.info();
+            if crate::system::PeripheralClockControl::is_enabled(info.peripheral) {
+                info.suspend_for_sleep();
             }
         };
     }
@@ -612,8 +615,10 @@ fn sleep_uart_resume() {
     use crate::uart::Instance;
     for_each_uart! {
         ($id:literal, $inst:ident, $peri:ident, $rxd:ident, $txd:ident, $cts:ident, $rts:ident, wakeup_source = $_:literal) => {
-            unsafe {
-                crate::peripherals::$inst::steal().info().resume_from_sleep();
+            // Skipped on suspend for the same reason: nothing to resume.
+            let info = unsafe { crate::peripherals::$inst::steal() }.info();
+            if crate::system::PeripheralClockControl::is_enabled(info.peripheral) {
+                info.resume_from_sleep();
             }
         };
     }

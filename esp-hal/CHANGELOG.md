@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- UART: `UartRx` no longer holds a wake lock. A receiver that must not lose data while the chip light-sleeps holds a `WakeLock` itself.
 
 ### Fixed
 
+- Light sleep no longer waits on a UART whose clock is off when suspending and resuming UARTs.
 
 ### Removed
 

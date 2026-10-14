@@ -162,6 +162,12 @@ impl PeripheralClockControl {
         Self::enable_forced_with_counts(peripheral, true, false, ref_counts)
     }
 
+    /// Returns whether the given peripheral is currently enabled.
+    #[cfg_attr(not(sleep_driver_supported), expect(dead_code))]
+    pub(crate) fn is_enabled(peripheral: Peripheral) -> bool {
+        PERIPHERAL_REF_COUNT.with(|ref_counts| ref_counts.counts[peripheral as usize] > 0)
+    }
+
     /// Disables the given peripheral.
     ///
     /// This keeps track of disabling a peripheral - i.e. it only

@@ -90,7 +90,6 @@ use crate::{
     interrupt::InterruptHandler,
     pac::uart0::RegisterBlock,
     private::DropGuard,
-    rtc_cntl::WakeLock,
     system::PeripheralGuard,
 };
 
@@ -637,8 +636,6 @@ where
                 phantom: PhantomData,
                 guard: rx_guard,
                 peri_clock_guard: peri_clock_guard.clone(),
-                // Receiving data continuously, the peripheral can't let the system sleep.
-                _wake_lock: WakeLock::new(),
                 reported_errors: config.rx.reported_errors,
             },
             tx: UartTx {
@@ -690,14 +687,18 @@ pub struct UartTx<'d, Dm: DriverMode> {
 }
 
 /// UART (Receive)
+///
+/// The receiver does not keep the chip awake. While the chip is in light
+/// sleep the UART is not clocked, so data arriving then is lost, and a byte
+/// cut short by entering or leaving sleep may be reported as a framing
+/// error. A caller that must not lose data holds a
+/// [`WakeLock`](crate::rtc_cntl::WakeLock) for as long as it receives.
 #[instability::unstable]
 pub struct UartRx<'d, Dm: DriverMode> {
     uart: AnyUart<'d>,
     phantom: PhantomData<Dm>,
     guard: PeripheralGuard,
     peri_clock_guard: UartClockGuard<'d>,
-    // Receiving data continuously, the peripheral can't let the system sleep.
-    _wake_lock: WakeLock,
     reported_errors: EnumSet<RxErrorKind>,
 }
 
@@ -1171,7 +1172,6 @@ impl<'d> UartRx<'d, Blocking> {
             phantom: PhantomData,
             guard: self.guard,
             peri_clock_guard: self.peri_clock_guard,
-            _wake_lock: self._wake_lock,
             reported_errors: self.reported_errors,
         }
     }
@@ -1194,7 +1194,6 @@ impl<'d> UartRx<'d, Async> {
             phantom: PhantomData,
             guard: self.guard,
             peri_clock_guard: self.peri_clock_guard,
-            _wake_lock: self._wake_lock,
             reported_errors: self.reported_errors,
         }
     }
