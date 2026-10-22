@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::{ptr::NonNull, task::Poll};
 
 use esp_phy::PhyInitGuard;
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::{Config, ReceivedPacket};
 #[cfg(feature = "coex")]
@@ -291,9 +291,21 @@ unsafe extern "C" fn btdm_sleep_check_duration(slot_cnt: i32) -> i32 {
     1
 }
 
-/// When the chip must be awake again, in microseconds since boot. Zero while the controller does
-/// not sleep.
-static CHIP_WAKE_AT_US: AtomicU64 = AtomicU64::new(0);
+/// When the chip must be awake again: the low 32 bits of the microseconds since boot. Zero while
+/// the controller does not sleep.
+///
+/// A wrapping difference resolves a deadline up to `i32::MAX` microseconds (about 35 minutes)
+/// ahead, so a longer sleep is cut to that and the chip wakes early, which costs nothing but the
+/// wake. A 64-bit atomic would need a lock table on chips without 64-bit atomics.
+static CHIP_WAKE_AT_US: AtomicU32 = AtomicU32::new(0);
+
+/// The low 32 bits of the microseconds since boot.
+#[inline(always)]
+fn now_us() -> u32 {
+    esp_hal::time::Instant::now()
+        .duration_since_epoch()
+        .as_micros() as u32
+}
 
 #[ram]
 unsafe extern "C" fn btdm_sleep_enter_phase1(lpcycles: i32) {
@@ -311,10 +323,8 @@ unsafe extern "C" fn btdm_sleep_enter_phase1(lpcycles: i32) {
         _ => lp_time >> 1,
     };
     let uncertainty = (us_to_sleep >> 11).max(MIN_UNCERTAINTY_US);
-    let now = esp_hal::time::Instant::now()
-        .duration_since_epoch()
-        .as_micros();
-    let wake_at = now + u64::from(us_to_sleep.saturating_sub(uncertainty));
+    let wake_in = us_to_sleep.saturating_sub(uncertainty).min(i32::MAX as u32);
+    let wake_at = now_us().wrapping_add(wake_in);
     CHIP_WAKE_AT_US.store(wake_at.max(1), Ordering::Relaxed);
 }
 
@@ -323,10 +333,11 @@ unsafe extern "C" fn btdm_sleep_enter_phase1(lpcycles: i32) {
 /// Returns zero when the chip must not sleep.
 pub(super) fn time_until_controller_wakes() -> esp_hal::time::Duration {
     let wake_at = CHIP_WAKE_AT_US.load(Ordering::Relaxed);
-    let now = esp_hal::time::Instant::now()
-        .duration_since_epoch()
-        .as_micros();
-    esp_hal::time::Duration::from_micros(wake_at.saturating_sub(now))
+    if wake_at == 0 {
+        return esp_hal::time::Duration::ZERO;
+    }
+    let remaining = wake_at.wrapping_sub(now_us()) as i32;
+    esp_hal::time::Duration::from_micros(remaining.max(0) as u64)
 }
 
 unsafe extern "C" fn btdm_sleep_enter_phase2() {
