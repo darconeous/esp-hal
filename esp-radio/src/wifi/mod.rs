@@ -1198,6 +1198,12 @@ pub(crate) fn wifi_init(_wifi: crate::hal::peripherals::WIFI<'_>) -> Result<(), 
     set_mac_time_update_cb(_wifi);
     unsafe {
         #[cfg(feature = "coex")]
+        esp_hal::if_unstable_hal! {
+            #[cfg(not(esp32))]
+            sleep::register_coex_lpclk_callback();
+        }
+
+        #[cfg(feature = "coex")]
         esp_wifi_result!(coex_init())?;
 
         esp_wifi_result!(esp_wifi_init_internal(addr_of!(internal::G_CONFIG)))?;

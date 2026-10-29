@@ -547,6 +547,18 @@ pub(crate) fn ble_deinit() {
         btdm_controller_deinit();
     }
 
+    // The controller and the Wi-Fi TSF share the modem low-power clock. The Wi-Fi driver keeps
+    // time on it through light sleep, where the main crystal stops. ESP-IDF hands the clock back
+    // to the RTC slow clock when the controller ran on the crystal, and tells the Wi-Fi driver.
+    if super::lp_clk::btdm().select == 0 {
+        unsafe {
+            btdm_lpclk_select_src(2);
+            btdm_lpclk_set_div(0);
+            #[cfg(feature = "coex")]
+            coex_update_lpclk_interval();
+        }
+    }
+
     super::lp_clk::release();
     // Disabling the PHY happens automatically, when the BLEController gets dropped.
 }

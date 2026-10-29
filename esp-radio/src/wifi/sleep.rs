@@ -9,6 +9,22 @@ use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 unsafe extern "C" {
     fn esp_wifi_internal_is_tsf_active() -> bool;
     fn esp_wifi_internal_update_light_sleep_wake_ahead_time(time_us: u32);
+    #[cfg(feature = "coex")]
+    fn esp_wifi_update_tsf_tick_interval() -> crate::sys::include::esp_err_t;
+}
+
+/// Lets the coexistence scheduler tell the Wi-Fi driver when the low-power clock changes.
+///
+/// The Wi-Fi TSF timer shares the modem low-power clock with the BLE controller. With
+/// coexistence, `coex_update_lpclk_interval` reaches the Wi-Fi driver only through this callback,
+/// which ESP-IDF registers before `coex_init`.
+#[cfg(feature = "coex")]
+pub(crate) fn register_coex_lpclk_callback() {
+    unsafe {
+        crate::sys::include::coex_wifi_register_update_lpclk_callback(Some(
+            esp_wifi_update_tsf_tick_interval,
+        ));
+    }
 }
 
 /// Time from the wake of the chip to the moment the blob can receive, in microseconds.
