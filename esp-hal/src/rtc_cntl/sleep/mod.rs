@@ -407,6 +407,13 @@ impl<'d> LowPower<'d> {
 
         sleep_uart_prepare();
 
+        // The slow clock times this sleep, so it is measured fresh for it. A deep sleep resets the
+        // chip, and the boot measures the clock again.
+        #[cfg(lp_timer_driver_supported)]
+        if kind == SleepKind::Light {
+            crate::clock::recalibrate_rtc_slow_clock();
+        }
+
         // Latch the systimer value *before* sleeping. The systimer keeps running during
         // the sleep enter/exit sequences, so we must not advance from the post-wake
         // value (that would count the enter/exit time twice). Instead we set an absolute

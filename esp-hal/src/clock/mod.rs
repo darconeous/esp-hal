@@ -500,6 +500,12 @@ pub(crate) fn calibrate_rtc_slow_clock() {
     const SLOW_CLK_SRC_CAL_CYCLES: u32 = 16;
     let cal_val = RtcClock::calibrate(slow_clk, SLOW_CLK_SRC_CAL_CYCLES);
 
+    // A failed measurement keeps the period already stored. Every conversion divides by it, and
+    // the light sleep path calls this on every sleep.
+    if cal_val == 0 {
+        return;
+    }
+
     let reg = cfg_select! {
         esp32s31 => LP_AON::regs().lp_store(1),
         esp32p4 => LP_AON::regs().lp_store1(),
@@ -508,7 +514,7 @@ pub(crate) fn calibrate_rtc_slow_clock() {
 
     reg.write(|w| unsafe { w.bits(cal_val) });
 
-    if rc_slow_selected && cal_val != 0 {
+    if rc_slow_selected {
         let frequency = ((1_000_000u64 << RtcClock::CAL_FRACT) / cal_val as u64) as u32;
 
         // On some chips, the calibrated clock is RC_SLOW_CLK divided down.
@@ -568,7 +574,8 @@ pub fn xtal_clock() -> Rate {
 /// The period is in unit of microseconds, represented as a fixed-point number
 /// with `RtcClock::CAL_FRACT` fractional bits.
 ///
-/// Written by [`calibrate_rtc_slow_clock`] during clock initialization.
+/// Written by [`calibrate_rtc_slow_clock`] during clock initialization, and by
+/// [`recalibrate_rtc_slow_clock`] before each light sleep.
 pub(crate) fn rtc_slow_cal_period() -> u32 {
     let reg = cfg_select! {
         esp32s31 => LP_AON::regs().lp_store(1),
@@ -596,6 +603,43 @@ pub(crate) fn rtc_ticks_to_us(ticks: u64) -> u64 {
     let lower = ticks & MASK;
 
     upper * period + ((lower * period) >> RtcClock::CAL_FRACT)
+}
+
+/// The LP timer reading at the last recalibration, and the microseconds it stood for.
+///
+/// Starts at zero, so until the first recalibration the time since power-up is the whole count
+/// at the boot period, as it always was.
+#[cfg(lp_timer_driver_supported)]
+static RTC_TIME_BASE: esp_sync::NonReentrantMutex<(u64, u64)> =
+    esp_sync::NonReentrantMutex::new((0, 0));
+
+/// Converts an LP timer reading to microseconds since power-up.
+///
+/// Ticks counted before a recalibration keep the period they were counted at, which keeps the
+/// result continuous when the period changes. ESP-IDF's `esp_rtc_get_time_us` does the same.
+#[cfg(lp_timer_driver_supported)]
+pub(crate) fn rtc_time_us(ticks: u64) -> u64 {
+    RTC_TIME_BASE.with(|(base_ticks, base_us)| {
+        *base_us + rtc_ticks_to_us(ticks.wrapping_sub(*base_ticks))
+    })
+}
+
+/// Measures the RTC slow clock again, without moving the time since power-up.
+///
+/// The internal RC oscillator that usually drives RTC_SLOW_CLK moves by a percent or more with
+/// temperature and supply voltage, and a light sleep is timed by that clock. A period measured
+/// once at boot turns that movement into a lasting error in the monotonic time. ESP-IDF measures
+/// the clock again before each light sleep (`sleep_low_power_clock_calibration`), and so does
+/// this.
+#[cfg(lp_timer_driver_supported)]
+pub(crate) fn recalibrate_rtc_slow_clock() {
+    RTC_TIME_BASE.with(|(base_ticks, base_us)| {
+        let ticks = crate::rtc_cntl::time_since_boot_raw();
+        let us = *base_us + rtc_ticks_to_us(ticks.wrapping_sub(*base_ticks));
+        calibrate_rtc_slow_clock();
+        *base_ticks = ticks;
+        *base_us = us;
+    });
 }
 
 /// Converts microseconds to RTC slow clock ticks using the calibrated period.

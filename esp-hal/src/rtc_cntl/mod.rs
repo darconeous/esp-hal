@@ -311,7 +311,7 @@ impl<'d> Rtc<'d> {
     /// reset the RTC timer.
     #[cfg(lp_timer_driver_supported)]
     pub fn time_since_power_up(&self) -> Duration {
-        Duration::from_micros(crate::clock::rtc_ticks_to_us(self.time_since_boot_raw()))
+        Duration::from_micros(crate::clock::rtc_time_us(self.time_since_boot_raw()))
     }
 
     /// Reads the current value of the boot time registers in microseconds.
